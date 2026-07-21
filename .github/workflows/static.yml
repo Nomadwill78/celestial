@@ -1,0 +1,62 @@
+# Build the Celestial web app and deploy it to GitHub Pages
+name: Deploy Celestial to Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 22+ is required: @supabase/realtime-js needs native WebSocket
+          # during the static-render pass of `expo export`.
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        env:
+          EXPO_PUBLIC_SUPABASE_URL: https://rjucvqthsseegxlwryru.supabase.co
+          # Anon key is safe to expose — it is the public client key
+          EXPO_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJqdWN2cXRoc3NlZWd4bHdyeXJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExMDEzMjcsImV4cCI6MjA5NjY3NzMyN30.eWV2-kuViKlELBMlM11by9gGMHQftkmnSt_8Hc3BiD4
+          EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_live_51RqATDRXQi1nfg3KhDBRwl0jzLO41ammtQfI8D62anppyllRHuv2IdpkUA5q4wORklJC8aGxpYslF5cxmEDwtFzh00IbGD5cKm
+          # Served from the repo's Pages subpath (https://<user>.github.io/celestial)
+          EXPO_PUBLIC_APP_URL: https://nomadwill78.github.io/celestial
+        run: npx expo export --platform web
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: 'dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

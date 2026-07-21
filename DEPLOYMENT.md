@@ -1,205 +1,159 @@
 # Celestial — Deployment Guide
 
-## Overview
-Celestial is a React Native + Expo app deployed via EAS Build to Google Play and Apple App Store.
-Backend: Supabase (auth + database + edge functions)
-Payments: Stripe
-AI: Anthropic Claude API
+Celestial is an Expo (React Native) app with a Supabase backend.
+
+- **Web** → built with `expo export` and served on GitHub Pages
+- **Mobile** → built with EAS for the App Store / Play Store
+- **Backend** → Supabase (auth + Postgres + edge functions)
+- **AI** → Anthropic Claude (`claude-haiku-4-5-20251001`)
+- **Payments** → Stripe (subscriptions)
+
+This repo is standalone: the app lives at the repo **root** (no `Celestial/` subfolder).
 
 ---
 
-## 1. Supabase Setup
+## How deploys happen (CI/CD)
 
-### Create project
-1. Go to https://supabase.com → New Project
-2. Note your **Project URL** and **anon key** (Settings → API)
-3. Copy service role key (for edge functions)
+Two GitHub Actions workflows run on push to `main`:
 
-### Run migration
+| Workflow | File | Trigger | What it does |
+|---|---|---|---|
+| Deploy Celestial to Pages | `.github/workflows/static.yml` | every push to `main` (+ manual) | `npm ci` → `expo export -p web` → publish `dist/` to GitHub Pages |
+| Deploy Supabase Functions | `.github/workflows/deploy-functions.yml` | push to `main` touching `supabase/**` (+ manual) | `supabase functions deploy` (all functions) |
+| EAS Build & Submit | `.github/workflows/eas-build.yml` | manual / push to `main` | builds native binaries via EAS |
+
+Both deploy workflows can also be run manually from the **Actions** tab ("Run workflow").
+
+### Live URLs
+- **Web app:** https://nomadwill78.github.io/celestial
+- **Supabase project ref:** `rjucvqthsseegxlwryru`
+- **Edge functions base:** `https://rjucvqthsseegxlwryru.functions.supabase.co/<function-name>`
+
+---
+
+## Required secrets
+
+### A. GitHub repository secrets
+`Settings → Secrets and variables → Actions`
+
+| Secret | Used by | Where to get it |
+|---|---|---|
+| `SUPABASE_ACCESS_TOKEN` | `deploy-functions.yml` | supabase.com/dashboard/account/tokens |
+| `EXPO_TOKEN` | `eas-build.yml` | expo.dev → Account → Access Tokens |
+
+### B. Supabase Edge Function secrets
+`Supabase Dashboard → Project Settings → Edge Functions → Secrets`
+(or `supabase secrets set NAME=value --project-ref rjucvqthsseegxlwryru`)
+
+| Secret | Purpose |
+|---|---|
+| `ANTHROPIC_API_KEY` | AI readings: advisor, horoscope, birth-chart, compatibility |
+| `STRIPE_SECRET_KEY` | Stripe checkout + billing portal |
+| `STRIPE_STARSEED_MONTHLY_PRICE_ID` | Starseed plan price |
+| `STRIPE_COSMIC_YEARLY_PRICE_ID` | Cosmic plan price |
+| `STRIPE_WEBHOOK_SECRET` | Verifies incoming Stripe webhooks |
+| `APP_URL` | Redirect base, e.g. `https://nomadwill78.github.io/celestial/` |
+
+> **Auto-injected — do NOT set these:** `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
+> `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`. Supabase provides them to every
+> edge function automatically.
+
+### C. Web build public keys
+These are **public** client keys, committed in `static.yml` (safe by design):
+`EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`,
+`EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `EXPO_PUBLIC_APP_URL`. Update them there if
+the project changes.
+
+---
+
+## 1. Web / GitHub Pages
+
+One-time setup:
+1. `Settings → Pages → Build and deployment → Source = **GitHub Actions**`.
+2. The app serves from the `/celestial` subpath, so `app.json` sets
+   `expo.experiments.baseUrl = "/celestial"`. If you rename the repo or use a
+   custom domain, update `baseUrl` and `EXPO_PUBLIC_APP_URL` in `static.yml`.
+3. Push to `main` (or run the workflow manually) → site publishes to
+   https://nomadwill78.github.io/celestial
+
+## 2. Supabase
+
+### Migrations
+Apply in order (`001` → `002` → `003`) via `supabase db push`, or paste each file
+from `supabase/migrations/` into the SQL editor:
+- `001_initial.sql` — profiles, subscriptions, saved_readings, notification_log, RLS, signup trigger
+- `002_fix_signup.sql` — hardens the new-user trigger (`SECURITY DEFINER SET search_path`)
+- `003_advisor_usage.sql` — `advisor_usage` table (per-account free "Ask Celeste" counter; read-only to clients, written only by the service role)
+
+### Edge functions (7)
+Deployed automatically by `deploy-functions.yml`, or manually:
 ```bash
-cd Celestial
-npx supabase db push  # or paste supabase/migrations/001_initial.sql into SQL editor
+supabase functions deploy --project-ref rjucvqthsseegxlwryru
 ```
+| Function | Auth | Notes |
+|---|---|---|
+| `advisor` | user JWT required | 3 free questions for non-Cosmic; unlimited for Cosmic |
+| `horoscope` | user JWT required | "general" free; love/career/wellness require premium |
+| `birth-chart` | user JWT + premium | full natal interpretation |
+| `compatibility` | user JWT + premium | returns validated JSON |
+| `stripe-checkout` | user JWT | creates a Checkout session |
+| `stripe-portal` | user JWT | opens the billing portal |
+| `stripe-webhook` | Stripe signature (`verify_jwt = false`) | syncs subscription state |
 
-### Deploy Edge Functions
-```bash
-npx supabase functions deploy horoscope
-npx supabase functions deploy advisor
-npx supabase functions deploy stripe-checkout
-npx supabase functions deploy stripe-webhook
-```
+`supabase/functions/_shared/entitlement.ts` is a shared helper (JWT → plan lookup),
+not a deployable function — the `_`-prefix keeps the CLI from deploying it.
 
-### Set Edge Function secrets
-```bash
-npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-npx supabase secrets set STRIPE_SECRET_KEY=sk_live_...
-npx supabase secrets set STRIPE_WEBHOOK_SECRET=whsec_...
-npx supabase secrets set STRIPE_STARSEED_MONTHLY_PRICE_ID=price_...
-npx supabase secrets set STRIPE_COSMIC_YEARLY_PRICE_ID=price_...
-npx supabase secrets set APP_URL=celestial://
-```
+## 3. Stripe
 
----
+1. Create two recurring products and copy their **Price IDs**:
+   - Starseed — $9.99/month → `STRIPE_STARSEED_MONTHLY_PRICE_ID`
+   - Cosmic — $79.99/year → `STRIPE_COSMIC_YEARLY_PRICE_ID`
+2. Add a webhook endpoint:
+   - **URL:** `https://rjucvqthsseegxlwryru.functions.supabase.co/stripe-webhook`
+   - **Events:** `checkout.session.completed`, `customer.subscription.deleted`, `invoice.payment_failed`
+     (recommended to also add: `customer.subscription.updated`, `invoice.payment_succeeded`)
+   - Copy the signing secret → `STRIPE_WEBHOOK_SECRET`.
 
-## 2. Stripe Setup
+## 4. Anthropic
 
-### Create account & products
-1. Go to https://stripe.com → Dashboard
-2. Create Products:
-   - **Starseed Monthly**: $9.99/month recurring → copy Price ID
-   - **Cosmic Annual**: $79.99/year recurring → copy Price ID
-
-### Configure webhook
-1. Stripe Dashboard → Developers → Webhooks → Add endpoint
-2. URL: `https://[YOUR_PROJECT].supabase.co/functions/v1/stripe-webhook`
-3. Events: `checkout.session.completed`, `customer.subscription.deleted`, `invoice.payment_failed`
-4. Copy webhook signing secret → set as `STRIPE_WEBHOOK_SECRET`
+Create a key at console.anthropic.com → set `ANTHROPIC_API_KEY` in Supabase secrets.
+Without it, the AI screens fall back to canned copy (they never hard-fail).
 
 ---
 
-## 3. Anthropic (Claude) API
-
-1. Go to https://console.anthropic.com → API Keys
-2. Create new key → set as `ANTHROPIC_API_KEY` in Supabase secrets
-3. The app uses `claude-haiku-4-5-20251001` for cost efficiency
-
----
-
-## 4. Local Development
+## Local development
 
 ```bash
-cd Celestial
-
-# Copy env file
-cp .env.example .env.local
-
-# Fill in your keys:
-# EXPO_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
-# EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-# EXPO_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...
-
-# Install dependencies
+cp .env.example .env.local   # fill EXPO_PUBLIC_* values
 npm install
-
-# Start dev server
-npx expo start
+npx expo start               # press "w" for web
 ```
+Fonts (Playfair Display + Inter) load from `@expo-google-fonts/*` at runtime —
+no manual font files needed.
 
 ---
 
-## 5. Font Setup
+## Mobile (EAS)
 
-Download fonts and place in `assets/fonts/`:
-- **Playfair Display**: https://fonts.google.com/specimen/Playfair+Display
-  - PlayfairDisplay-Regular.ttf, PlayfairDisplay-Bold.ttf, PlayfairDisplay-Italic.ttf
-- **Inter**: https://fonts.google.com/specimen/Inter
-  - Inter-Regular.ttf, Inter-Medium.ttf, Inter-SemiBold.ttf, Inter-Bold.ttf
-
----
-
-## 6. EAS Build Setup
-
-### Install EAS CLI
 ```bash
-npm install -g eas-cli
-eas login
+npm install -g eas-cli && eas login
+eas build:configure                 # sets projectId in app.json / eas.json
+eas build --platform android --profile preview     # test build
+eas build --platform all --profile production      # store builds
+eas submit --platform android        # or: ios
 ```
-
-### Initialize EAS project
-```bash
-cd Celestial
-eas build:configure
-```
-
-This will:
-- Create your project on expo.dev
-- Update `app.json` with your project ID
-
-### Build for testing (Preview)
-```bash
-# Android APK (no Play Store account needed)
-eas build --platform android --profile preview
-
-# iOS Simulator build
-eas build --platform ios --profile preview
-```
-
-### Build for App Stores (Production)
-```bash
-eas build --platform all --profile production
-```
+Store assets: 512×512 (Play) / 1024×1024 (App Store) icons, plus screenshots.
 
 ---
 
-## 7. Google Play Store Submission
+## Go-live checklist
 
-### Prerequisites
-1. Google Play Developer account ($25 one-time): https://play.google.com/console
-2. Create app in Play Console
-3. Complete store listing (screenshots, description, icon)
-
-### Build & Submit
-```bash
-# Build production AAB
-eas build --platform android --profile production
-
-# Submit to Play Store
-eas submit --platform android
-```
-
-Required assets:
-- App icon: 512×512 PNG
-- Feature graphic: 1024×500 PNG
-- Screenshots: Minimum 2, phone screenshots
-
----
-
-## 8. Apple App Store Submission
-
-### Prerequisites
-1. Apple Developer account ($99/year): https://developer.apple.com
-2. Create app in App Store Connect
-3. App Review Info
-
-### Build & Submit
-```bash
-# Build production IPA
-eas build --platform ios --profile production
-
-# Submit to App Store
-eas submit --platform ios
-```
-
-Required assets:
-- App icon: 1024×1024 PNG (no transparency)
-- Screenshots: 6.7" iPhone, 12.9" iPad Pro
-
----
-
-## 9. Automated CI/CD
-
-The `.github/workflows/eas-build.yml` workflow automatically builds on push to `main`.
-
-Add secrets to GitHub:
-- `EXPO_TOKEN`: Your Expo access token (expo.dev → Account → Access Tokens)
-
----
-
-## 10. Production Checklist
-
-- [ ] Supabase project created and migration run
-- [ ] All edge functions deployed with secrets set
-- [ ] Stripe products and webhook configured
-- [ ] Fonts downloaded and placed in assets/fonts/
-- [ ] .env.local filled with production keys
-- [ ] EAS project initialized (`eas.json` updated with real project ID)
-- [ ] App icon and splash screen created
-- [ ] Google Play Console app created
-- [ ] Apple App Store Connect app created
-- [ ] Production builds tested on real devices
-- [ ] App store listings completed with screenshots
-
----
-
-## Support
-Questions: hello@celestial.app
+- [ ] Pages source set to "GitHub Actions"; web deploy green
+- [ ] Migrations `001`–`003` applied
+- [ ] All 7 edge functions deployed
+- [ ] GitHub secrets set: `SUPABASE_ACCESS_TOKEN` (+ `EXPO_TOKEN` for mobile)
+- [ ] Supabase secrets set: `ANTHROPIC_API_KEY`, all `STRIPE_*`, `APP_URL`
+- [ ] Stripe products created; webhook endpoint + `STRIPE_WEBHOOK_SECRET` configured
+- [ ] Sign up → onboarding → home flow works end to end
+- [ ] Ask Celeste free-question limit + upgrade path verified
+- [ ] Checkout and "Manage Billing" verified against Stripe

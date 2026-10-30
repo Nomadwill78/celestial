@@ -1,1 +1,14 @@
-IyBDZWxlc3RpYWwKCkNlbGVzdGlhbCBpcyBhbiBFeHBvIChSZWFjdCBOYXRpdmUpIG1vYmlsZSBhcHAgd2l0aCBhIFN1cGFiYXNlIGJhY2tlbmQuIFRoZSBhcHAgbGl2ZXMgYXQgdGhlIHJlcG8gcm9vdC4KCiMjIFN0YWNrCgotIEV4cG8gd2l0aCBleHBvLXJvdXRlcjogRUFtIGJ1aWxkcyBmb3IgQXBwIFN0b3JlIGFuZCBQbGF5IFN0b3JlCi0gU3VwYWJhc2UgKGF1dGgsIFBvc3RncmVzLCBlZGdlIGZ1bmN0aW9ucykKLSBBbnRocm9waWMgQ2xhdWRlIGZvciBBSSBmZWF0dXJlcwotIFN0cmlwZSBmb3Igc3Vic2NyaXB0aW9ucwoKIyMgRGVwbG95CgpTZWUgREVQTE9ZTUVOVC5tZCBmb3IgdGhlIGZ1bGwgZGVwbG95bWVudCBndWlkZSAod2ViIHZpYSBleHBvIGV4cG9ydCBvbiBHaXRIdWIgUGFnZXMsIG1vYmlsZSB2aWEgRUFtLCBiYWNrZW5kIG9uIFN1cGFiYXNlKS4K
+# Celestial
+
+Celestial is an Expo (React Native) mobile app with a Supabase backend. The app lives at the repo root.
+
+## Stack
+
+- Expo with expo-router: EAS builds for App Store and Play Store
+- Supabase (auth, Postgres, edge functions)
+- Anthropic Claude for AI features
+- Stripe for subscriptions
+
+## Deploy
+
+See DEPLOYMENT.md for the full deployment guide (web via expo export on GitHub Pages, mobile via EAS, backend on Supabase).

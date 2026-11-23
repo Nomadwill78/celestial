@@ -1,27 +1,10 @@
-# Deploy Celestial's Supabase edge functions (AI readings, Stripe checkout/webhook)
-name: Deploy Supabase Functions
-
+name: Backend deployment retired
 on:
-  push:
-    branches: ["main"]
-    paths:
-      - "supabase/functions/**"
-      - "supabase/config.toml"
   workflow_dispatch:
-
+permissions:
+  contents: read
 jobs:
-  deploy:
+  notice:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Supabase CLI
-        uses: supabase/setup-cli@v1
-        with:
-          version: latest
-
-      - name: Deploy all edge functions
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: supabase functions deploy --project-ref rjucvqthsseegxlwryru
+      - run: echo "Deploy the Celestial backend only from Nomadwill78/Lodestar, directory Celestial."
